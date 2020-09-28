@@ -8,7 +8,58 @@ class PyAgent(base_agent.BaseAgent):
     def step(self, obs):
         super(PyAgent, self).step(obs)
 
+        if self.buildSupplyDepot(obs):
+            x = random.randint(0, 83)
+            y = random.randint(0, 83)
+
+            return actions.FUNCTIONS.Build_SupplyDepot_screen('now', (x, y))
+
+        if self.buildBarracks(obs):
+            x = random.randint(0, 83)
+            y = random.randint(0, 83)
+
+            return actions.FUNCTIONS.Build_Barracks_screen('now', (x, y))
+
+
+        workers = [unit for unit in obs.observation['feature_units']
+                    if unit.unit_type == units.Terran.SCV]
+        if len(workers) > 0: 
+            worker = random.choice(workers)
+            
+            return actions.FUNCTIONS.select_point("select_all_type", (worker.x, worker.y))
+
         return actions.FUNCTIONS.no_op()
+
+    def get_units_by_type(self, obs, unit_type):
+        return [unit for unit in obs.observation.feature_units
+                if unit.unit_type == unit_type]
+    
+    def unit_type_is_selected(self, obs, unit_type):
+        if (len(obs.observation.single_select) > 0 and
+                obs.observation.single_select[0].unit_type == unit_type):
+            return True
+
+        if (len(obs.observation.multi_select) > 0 and
+                obs.observation.multi_select[0].unit_type == unit_type):
+            return True
+        
+        return False 
+
+    def buildSupplyDepot(self,obs):
+        supplyDepots = self.get_units_by_type(obs, units.Terran.SupplyDepot)
+        if len(supplyDepots) == 0:
+            if self.unit_type_is_selected(obs, units.Terran.SCV):
+                if (actions.FUNCTIONS.Build_SupplyDepot_screen.id in obs.observation.available_actions):
+                    return True
+                return False
+    
+    def buildBarracks(self,obs):
+        barracks = self.get_units_by_type(obs, units.Terran.Barracks)
+        if len(barracks) == 0:
+            if self.unit_type_is_selected(obs, units.Terran.SCV):
+                if (actions.FUNCTIONS.Build_Barracks_screen.id in obs.observation.available_actions):
+                    return True
+                return False
 
 def main(unused_argv):
     agent = PyAgent()
