@@ -20,6 +20,23 @@ class PyAgent(base_agent.BaseAgent):
 
             return actions.FUNCTIONS.Build_Barracks_screen('now', (x, y))
 
+        if self.buildMarines(obs):
+            return actions.FUNCTIONS.Train_Marine_quick('now') 
+
+        if self.attack(obs):
+            return actions.FUNCTIONS.Attack_minimap(0, [19,23])
+
+        marines = [unit for unit in obs.observation['feature_units']
+                    if unit.unit_type == units.Terran.Marine]
+        if len(marines) > 5:
+            marine = random.choice(marines)
+            return actions.FUNCTIONS.select_point("select_all_type", (marine.x, marine.y))
+
+        barracks = [unit for unit in obs.observation['feature_units']
+                    if unit.unit_type == units.Terran.Barracks]
+        if len(barracks) > 0:
+            barrack = random.choice(barracks)
+            return actions.FUNCTIONS.select_point("select_all_type", (barrack.x, barrack.y))
 
         workers = [unit for unit in obs.observation['feature_units']
                     if unit.unit_type == units.Terran.SCV]
@@ -44,6 +61,14 @@ class PyAgent(base_agent.BaseAgent):
             return True
         
         return False 
+    
+    def buildMarines(self, obs):
+        marine = self.get_units_by_type(obs, units.Terran.Marine)
+        if len(marine) <= 5:
+            if self.unit_type_is_selected(obs, units.Terran.Barracks):
+                if(actions.FUNCTIONS.Train_Marine_quick.id in obs.observation.available_actions):
+                    return True
+                return False
 
     def buildSupplyDepot(self,obs):
         supplyDepots = self.get_units_by_type(obs, units.Terran.SupplyDepot)
@@ -60,6 +85,16 @@ class PyAgent(base_agent.BaseAgent):
                 if (actions.FUNCTIONS.Build_Barracks_screen.id in obs.observation.available_actions):
                     return True
                 return False
+
+    def attack(self, obs):
+        marine = self.get_units_by_type(obs, units.Terran.Marine)
+        if len(marine) > 5:
+            if self.unit_type_is_selected(obs, units.Terran.Marine):
+                if (actions.FUNCTIONS.Attack_screen.id in
+                        obs.observation.available_actions):
+                    return True
+                return False
+
 
 def main(unused_argv):
     agent = PyAgent()
