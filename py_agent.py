@@ -1,134 +1,120 @@
-from pysc2.agents import base_agent
-from pysc2.env import sc2_env
-from pysc2.lib import actions, features, units
-from absl import app
 import random
+import sc2 
+from sc2 import run_game, maps, Race, Difficulty
+from sc2.player import Bot, Computer
+from sc2.constants import NEXUS, PROBE, PYLON, ASSIMILATOR, GATEWAY, \
+    CYBERNETICSCORE, STALKER, STARGATE, VOIDRAY
 
-class PyAgent(base_agent.BaseAgent):
-    def step(self, obs):
-        super(PyAgent, self).step(obs)
+from examples.protoss.cannon_rush import CannonRushBot
 
-        if self.buildSupplyDepot(obs):
-            x = random.randint(0, 83)
-            y = random.randint(0, 83)
 
-            return actions.FUNCTIONS.Build_SupplyDepot_screen('now', (x, y))
+class SentdeBot(sc2.BotAI):
+    def __init__(self):
+        self.ITERATIONS_PER_MINUTE = 165
+        self.MAX_WORKERS = 60
 
-        if self.buildBarracks(obs):
-            x = random.randint(0, 83)
-            y = random.randint(0, 83)
 
-            return actions.FUNCTIONS.Build_Barracks_screen('now', (x, y))
+    async def on_step(self, iteration):
+        self.iteration = iteration
+        # print(self.iteration/self.ITERATIONS_PER_MINUTE)
+        await self.distribute_workers()
+        await self.build_workers()
+        await self.build_pylons()
+        await self.build_assimilators()
+        await self.expand()
+        await self.offensive_force_buildings()
+        await self.build_offensive_force()
+        await self.attack()
+    
+    async def build_workers(self):
+        if len(self.units(NEXUS))*16 > len(self.units(PROBE)):
+            if len(self.units(PROBE)) < self.MAX_WORKERS:
+                for nexus in self.units(NEXUS).ready.noqueue:
+                    if self.can_afford(PROBE):
+                        await self.do(nexus.train(PROBE))
+    
+    async def build_pylons(self):
+        if self.supply_left < 5 and not self.already_pending(PYLON):
+            nexuses = self.units(NEXUS).ready
+            if nexuses.exists:
+                if self.can_afford(PYLON):
+                    await self.build(PYLON, near=nexuses.first)
+    
+    async def build_assimilators(self):
+        for nexus in self.units(NEXUS).ready:
+            vaspenes = self.state.vespene_geyser.closer_than(10.0, nexus)
+            for vaspene in vaspenes:
+                if not self.can_afford(ASSIMILATOR):
+                    break
+                worker = self.select_build_worker(vaspene.position)
+                if worker is None:
+                    break
+                if not self.units(ASSIMILATOR).closer_than(1.0, vaspene).exists:
+                    await self.do(worker.build(ASSIMILATOR, vaspene))
+    
+    async def expand(self):
+        if self.units(NEXUS).amount < (self.iteration / self.ITERATIONS_PER_MINUTE) and self.can_afford(NEXUS):
+            await self.expand_now()
+    
+    async def offensive_force_buildings(self):
+        if self.units(PYLON).ready.exists:
+            pylon = self.units(PYLON).ready.random
 
-        if self.buildMarines(obs):
-            return actions.FUNCTIONS.Train_Marine_quick('now') 
+            if self.units(GATEWAY).ready.exists and not self.units(CYBERNETICSCORE):
+                if self.can_afford(CYBERNETICSCORE) and not self.already_pending(CYBERNETICSCORE):
+                    await self.build(CYBERNETICSCORE, near=pylon)
 
-        if self.attack(obs):
-            return actions.FUNCTIONS.Attack_minimap(0, [19,23])
-
-        marines = [unit for unit in obs.observation['feature_units']
-                    if unit.unit_type == units.Terran.Marine]
-        if len(marines) > 5:
-            marine = random.choice(marines)
-            return actions.FUNCTIONS.select_point("select_all_type", (marine.x, marine.y))
-
-        barracks = [unit for unit in obs.observation['feature_units']
-                    if unit.unit_type == units.Terran.Barracks]
-        if len(barracks) > 0:
-            barrack = random.choice(barracks)
-            return actions.FUNCTIONS.select_point("select_all_type", (barrack.x, barrack.y))
-
-        workers = [unit for unit in obs.observation['feature_units']
-                    if unit.unit_type == units.Terran.SCV]
-        if len(workers) > 0: 
-            worker = random.choice(workers)
+            elif len(self.units(GATEWAY)) < ((self.iteration / self.ITERATIONS_PER_MINUTE)/2):
+                if self.can_afford(GATEWAY) and not self.already_pending(GATEWAY):
+                    await self.build(GATEWAY, near=pylon)
             
-            return actions.FUNCTIONS.select_point("select_all_type", (worker.x, worker.y))
-
-        return actions.FUNCTIONS.no_op()
-
-    def get_units_by_type(self, obs, unit_type):
-        return [unit for unit in obs.observation.feature_units
-                if unit.unit_type == unit_type]
+            if self.units(CYBERNETICSCORE).ready.exists:
+                if len(self.units(STARGATE)) < ((self.iteration / self.ITERATIONS_PER_MINUTE)/2):
+                    if self.can_afford(STARGATE) and not self.already_pending(STARGATE):
+                        await self.build(STARGATE, near=pylon)
     
-    def unit_type_is_selected(self, obs, unit_type):
-        if (len(obs.observation.single_select) > 0 and
-                obs.observation.single_select[0].unit_type == unit_type):
-            return True
-
-        if (len(obs.observation.multi_select) > 0 and
-                obs.observation.multi_select[0].unit_type == unit_type):
-            return True
+    async def build_offensive_force(self):
+        for gw in self.units(GATEWAY).ready.noqueue:
+            if not self.units(STALKER).amount > self.units(VOIDRAY).amount:
+                if self.can_afford(STALKER) and self.supply_left > 0:
+                    await self.do(gw.train(STALKER))
         
-        return False 
+        for sg in self.units(STARGATE).ready.noqueue:
+            if self.can_afford(VOIDRAY) and self.supply_left > 0:
+                await self.do(sg.train(VOIDRAY))        
     
-    def buildMarines(self, obs):
-        marine = self.get_units_by_type(obs, units.Terran.Marine)
-        if len(marine) <= 5:
-            if self.unit_type_is_selected(obs, units.Terran.Barracks):
-                if(actions.FUNCTIONS.Train_Marine_quick.id in obs.observation.available_actions):
-                    return True
-                return False
+    def find_target(self, state):
+        if len(self.known_enemy_units) > 0:
+            return random.choice(self.known_enemy_units)
+        elif len(self.known_enemy_structures) > 0:
+            return random.choice(self.known_enemy_structures)
+        else:
+            return self.enemy_start_locations[0]
 
-    def buildSupplyDepot(self,obs):
-        supplyDepots = self.get_units_by_type(obs, units.Terran.SupplyDepot)
-        if len(supplyDepots) == 0:
-            if self.unit_type_is_selected(obs, units.Terran.SCV):
-                if (actions.FUNCTIONS.Build_SupplyDepot_screen.id in obs.observation.available_actions):
-                    return True
-                return False
-    
-    def buildBarracks(self,obs):
-        barracks = self.get_units_by_type(obs, units.Terran.Barracks)
-        if len(barracks) == 0:
-            if self.unit_type_is_selected(obs, units.Terran.SCV):
-                if (actions.FUNCTIONS.Build_Barracks_screen.id in obs.observation.available_actions):
-                    return True
-                return False
+    async def attack(self):
+        # {UNIT: [n to fight, n to defend]}
+        aggressive_units = {STALKER: [15, 5],
+                            VOIDRAY: [8, 3]}
 
-    def attack(self, obs):
-        marine = self.get_units_by_type(obs, units.Terran.Marine)
-        if len(marine) > 5:
-            if self.unit_type_is_selected(obs, units.Terran.Marine):
-                if (actions.FUNCTIONS.Attack_screen.id in
-                        obs.observation.available_actions):
-                    return True
-                return False
+        for UNIT in aggressive_units:
+            if self.units(UNIT).amount > aggressive_units[UNIT][0] and self.units(UNIT).amount > aggressive_units[UNIT][1]:
+                for s in self.units(UNIT).idle:
+                    await self.do(s.attack(self.find_target(self.state)))
+
+            elif self.units(UNIT).amount > aggressive_units[UNIT][1]:
+                if len(self.known_enemy_units) > 0:
+                    for s in self.units(UNIT).idle:
+                        await self.do(s.attack(random.choice(self.known_enemy_units)))
 
 
-def main(unused_argv):
-    agent = PyAgent()
-    try:
-        while True:
-            with sc2_env.SC2Env(
-                map_name="Simple64",
-                players= [
-                    sc2_env.Agent(sc2_env.Race.terran),
-                    sc2_env.Bot(
-                        sc2_env.Race.random,
-                        sc2_env.Difficulty.very_easy
-                        )
-                ],
-                agent_interface_format=features.AgentInterfaceFormat(
-                    feature_dimensions=features.Dimensions(screen=84, minimap=64),
-                    use_feature_units=True
-                ),
-                step_mul=8,
-                game_steps_per_episode=0,
-                visualize=True) as env:
-                agent.setup(env.observation_spec(),env.action_spec())
 
-                timesteps = env.reset()
-                agent.reset()
 
-                while True:
-                    step_actions = [agent.step(timesteps[0])]
-                    if timesteps[0].last():
-                        break
-                    timesteps = env.step(step_actions)
 
-    except KeyboardInterrupt:
-        pass
-
-if __name__ == "__main__":
-    app.run(main)
+run_game(
+    maps.get("AbyssalReefLE"), 
+    [
+        Bot(Race.Protoss, SentdeBot()),
+        Computer(Race.Terran, Difficulty.Hard)
+    ],
+    realtime=False
+)
